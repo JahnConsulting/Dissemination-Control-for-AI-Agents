@@ -302,6 +302,82 @@ Evaluates context-dependent rules deterministically. Stores policies as code in 
 11. Response delivered to user in the original channel
 ```
 
+<details>
+<summary>Sequence Diagram: Request Flow with Enforcement Points</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+
+    actor User
+    participant CP as Communication<br/>Platform
+    participant Orch as Orchestration<br/>Service
+    participant PE as Policy Engine<br/>(OPA)
+    participant LLM as LLM Provider
+    participant MCP as Custom<br/>MCP Server
+    participant IdP as Identity Provider<br/>(Keycloak)
+    participant TS as Target System
+
+    User ->> CP: Message in channel
+
+    CP ->> Orch: Webhook<br/>(user_id, channel_id, message)
+
+    rect rgb(220, 235, 255)
+        Note over Orch, PE: LAYER 0 · Tool Containment (Default Deny)
+        Orch ->> PE: Which tools are allowed for this channel?
+        PE -->> Orch: ["ticket-system", "knowledge-base"]
+        Note over Orch: Removes all non-whitelisted<br/>tool definitions from the request.<br/>Blocked tools do not exist<br/>for the LLM.
+    end
+
+    rect rgb(232, 240, 254)
+        Note over Orch: LAYER 1 · Behavioural Steering
+        Note over Orch: Load channel-specific system prompt.<br/>Tone, detail level, behaviour rules.<br/>Version-controlled in Git,<br/>approval workflow.
+    end
+
+    Orch ->> LLM: API request<br/>(global prompt + channel overlay<br/>+ only whitelisted tools)
+    LLM -->> Orch: tool_call: search_tickets(query)
+
+    Orch ->> MCP: Tool call + context metadata<br/>(user_id, channel_id, channel_type)
+
+    rect rgb(220, 235, 255)
+        Note over MCP, PE: LAYER 0 · Defence in Depth
+        MCP ->> PE: Is this tool allowed for this channel?
+        PE -->> MCP: true
+        Note over MCP: Independent check.<br/>Slug-level enforcement:<br/>URL path, not parameter.
+    end
+
+    rect rgb(220, 245, 225)
+        Note over MCP, IdP: LAYER 2 · Identity Delegation (Token Exchange)
+        MCP ->> IdP: Token exchange request<br/>(grant_type: urn:ietf:params:oauth:<br/>grant-type:token-exchange,<br/>requested_subject: user_id,<br/>scope: ticket-system:read)
+        IdP -->> MCP: Delegated token<br/>(sub: user, act: bot,<br/>scope: read, TTL: 15min)
+        Note over MCP: Agent now acts with<br/>user permissions,<br/>not service account.
+    end
+
+    rect rgb(255, 240, 220)
+        Note over MCP, PE: LAYER 3 · Dissemination Policy
+        MCP ->> PE: Policy check<br/>(user, channel, resource, classification)
+        PE -->> MCP: allow: true,<br/>max_classification: "internal"
+        Note over MCP: Deterministic decision.<br/>No LLM in the access path.<br/>Policies in Git, auditable.
+    end
+
+    MCP ->> TS: API query<br/>(delegated user token, filtered scope)
+    TS -->> MCP: Only data the user is authorised to see
+
+    MCP -->> Orch: Filtered results
+    Orch ->> LLM: Results into context window
+    LLM -->> Orch: Formulated response<br/>(per channel prompt policy)
+
+    Orch ->> CP: Response to channel
+    CP ->> User: Authorised response
+
+    rect rgb(240, 230, 245)
+        Note over Orch, PE: LAYER 4 · Compliance Audit (ASYNCHRONOUS)
+        Note over Orch: Post-hoc review:<br/>Audit log, blocked-request analysis,<br/>optional semantic output analysis.<br/>Not in the critical path.
+    end
+```
+
+</details>
+
 ### Divergent Scenario: User Without Access
 
 ```
@@ -357,6 +433,66 @@ Layer 4: Compliance Audit
 ├── Blocked-request analysis for security and policy tuning
 └── Optional: async semantic output analysis for high-security environments
 ```
+
+<details>
+<summary>Flowchart: Enforcement Points and Denial Paths</summary>
+
+```mermaid
+flowchart TD
+    Start(["User message<br/>in channel"])
+    --> Extract["Orchestration Service: Extract context<br/>user_id · channel_id · channel_type"]
+
+    Extract --> S0{{"LAYER 0 · Tool Containment<br/>─────────────────────────<br/>Policy Engine: Which tools<br/>are allowed for this channel?<br/>(Default Deny)"}}
+
+    S0 -->|"No tools allowed"| D0(["✋ DENY · No tool access<br/>Agent responds conversationally only.<br/>Blocked systems do not exist<br/>for the agent — no error message,<br/>no side channel."])
+
+    S0 -->|"Whitelist loaded"| S1["LAYER 1 · Behavioural Steering<br/>─────────────────────────────<br/>Load channel-specific system prompt.<br/>Behaviour rules: tone, detail level,<br/>what to emphasise, what to omit.<br/>Version-controlled in Git, approval workflow."]
+
+    S1 --> LLM["LLM API Request<br/>─────────────────<br/>Global prompt + channel overlay<br/>+ ONLY whitelisted tool definitions<br/>+ conversation history"]
+
+    LLM --> ToolCall{"LLM generates<br/>tool call?"}
+
+    ToolCall -->|"No"| DirectResp(["Response without data access<br/>(pure conversation)"])
+
+    ToolCall -->|"Yes"| MCP["Tool call to Custom MCP Server<br/>+ context metadata<br/>(user_id, channel_id, channel_type)"]
+
+    MCP --> S0b{{"LAYER 0 · Defence in Depth<br/>──────────────────────────<br/>MCP Server: Is this tool<br/>allowed for this channel?<br/>(Independent check)"}}
+
+    S0b -->|"Not allowed"| D0b(["✋ DENY · Tool call rejected<br/>Catches compromised<br/>orchestration service.<br/>Slug-level enforcement:<br/>URL path, not parameter."])
+
+    S0b -->|"Allowed"| S2{{"LAYER 2 · Identity Delegation<br/>────────────────────────────<br/>Token Exchange (RFC 8693)<br/>sub: user · act: bot<br/>scope: read · TTL: 15min"}}
+
+    S2 -->|"Token exchange failed<br/>(user lacks access)"| D2(["✋ DENY · No permission<br/>Agent responds neutrally:<br/>'I cannot provide information<br/>on that topic.'<br/>NOT 'Access denied'<br/>NOT 'Not found'"])
+
+    S2 -->|"Delegated token obtained"| S3{{"LAYER 3 · Dissemination Policy<br/>─────────────────────────────<br/>Policy Engine: May this user<br/>see this data in this<br/>channel context?<br/>(classification × channel)"}}
+
+    S3 -->|"DENY<br/>(e.g. confidential data<br/>in public channel)"| D3(["✋ DENY · Context mismatch<br/>User has access to the data,<br/>but the channel context<br/>does not permit disclosure.<br/>'Right person, wrong room'"])
+
+    S3 -->|"ALLOW<br/>(with constraints if applicable)"| Query["MCP Server → Target System<br/>──────────────────────<br/>Query with delegated user token.<br/>Target system returns only data<br/>the user is authorised to see."]
+
+    Query --> Filter["Result filtering<br/>per policy constraints<br/>(e.g. max_classification)"]
+
+    Filter --> Response["Filtered data → LLM<br/>LLM formulates response<br/>per channel prompt policy"]
+
+    Response --> Deliver(["✅ Authorised response<br/>delivered to channel"])
+
+    Deliver -.->|"asynchronous"| S4["LAYER 4 · Compliance Audit<br/>─────────────────────────<br/>Post-hoc review:<br/>· Complete audit log<br/>· Blocked-request analysis<br/>· Optional: Semantic output<br/>  analysis (mosaic problem)<br/>Not in the critical path."]
+
+    %% Styling
+    classDef deny fill:#fee,stroke:#c33,stroke-width:2px,color:#333
+    classDef allow fill:#efe,stroke:#3a3,stroke-width:2px,color:#333
+    classDef layer fill:#e8f0fe,stroke:#4a7bd4,stroke-width:2px,color:#333
+    classDef process fill:#fff,stroke:#666,stroke-width:1px,color:#333
+    classDef audit fill:#f3e8ff,stroke:#9b59b6,stroke-width:2px,color:#333
+
+    class D0,D0b,D2,D3 deny
+    class Deliver,DirectResp allow
+    class S0,S0b,S2,S3 layer
+    class S1,LLM,MCP,Query,Filter,Response,Extract process
+    class S4 audit
+```
+
+</details>
 
 ### The Mosaic Problem
 
