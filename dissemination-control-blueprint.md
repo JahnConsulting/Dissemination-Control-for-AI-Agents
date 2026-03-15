@@ -385,6 +385,59 @@ Channel: direct-message
 
 ---
 
+## Channel Audience Scoping
+
+Identity delegation (Layer 2) scopes the *query* to the requesting user's permissions. But the *response* is visible to everyone in the channel. If Anna asks about a confidential deal in a shared channel and receives details, every channel member can read the answer — including those who would not have access to the data themselves.
+
+This is not a theoretical concern. It is the most common information leakage pattern in multi-user agent deployments: the data access is correctly scoped, but the output medium is not.
+
+### Two Modes
+
+The architecture defines two channel audience scoping modes. The choice between them is a policy decision per channel — not a global setting.
+
+**Intersection Mode (conservative).** The agent may only return data that *all* channel members are authorised to see. The effective permission set is the AND-conjunction of all members' permissions — the lowest common denominator. Nothing enters the channel that any single member should not see.
+
+This is the secure default for channels with mixed audiences: cross-functional teams, channels with external guests, or any context where the membership roster includes people with different clearance levels.
+
+The tradeoff is restrictiveness. A single member with limited access lowers the permission ceiling for everyone. In practice, this is a feature, not a bug — it forces organisations to compose channel membership deliberately rather than defaulting to "everyone."
+
+**Requester Mode (current model).** The agent responds based on the requesting user's permissions. More flexible, but the response is visible to all channel members, including those who would not have access to the underlying data.
+
+This is acceptable for channels where all members have equivalent access levels — which is typically the case for well-designed team channels (the sales team channel contains sales team members, who all have access to sales data). It is not acceptable for mixed-audience channels.
+
+### Implementation
+
+Intersection mode requires the MCP server to know the channel's member list and resolve each member's permission set at query time. The effective permission set for the query is the intersection of all member permissions. This adds latency (one permission lookup per member) and complexity (the orchestration service must pass the member list to the MCP server).
+
+For channels with stable membership, the intersection can be pre-computed and cached — updated only when channel membership changes. This reduces the runtime cost to a single cache lookup.
+
+For direct messages, the distinction is irrelevant — there is only one recipient, so requester mode and intersection mode produce identical results.
+
+### Policy Configuration
+
+```
+Channel: #town-square (public, all employees)
+  audience_mode: intersection
+  → Agent can only share data ALL employees may see
+  → Effectively limits responses to public-classified data
+
+Channel: #sales-team (private, sales team only)
+  audience_mode: requester
+  → All members have equivalent sales access
+  → Requester mode is sufficient
+
+Channel: #project-alpha (private, cross-functional)
+  audience_mode: intersection
+  → Mixed audience: sales, engineering, external consultant
+  → Only data visible to ALL members (including the consultant) is returned
+
+Channel: direct-message
+  audience_mode: requester
+  → Single recipient, modes are equivalent
+```
+
+---
+
 ## Context Window Management as a Policy Decision
 
 In long-running sessions, the agent's context window accumulates information from previous exchanges. This creates a governance problem: data that was legitimately accessed in turn 1 may still be in the context window when a different user (in a shared channel) asks a question in turn 15.
