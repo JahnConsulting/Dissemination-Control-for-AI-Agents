@@ -440,56 +440,56 @@ Layer 4: Compliance Audit
 ```mermaid
 flowchart TD
     Start(["User message<br/>in channel"])
-    --> Extract["Orchestration Service: Extract context<br/>user_id · channel_id · channel_type"]
+--> Extract["Orchestration Service: Extract context<br/>user_id · channel_id · channel_type"]
 
-    Extract --> S0{{"LAYER 0 · Tool Containment<br/>─────────────────────────<br/>Policy Engine: Which tools<br/>are allowed for this channel?<br/>(Default Deny)"}}
+Extract --> S0{{"LAYER 0 · Tool Containment<br/>─────────────────────────<br/>Policy Engine: Which tools<br/>are allowed for this channel?<br/>(Default Deny)"}}
 
-    S0 -->|"No tools allowed"| D0(["✋ DENY · No tool access<br/>Agent responds conversationally only.<br/>Blocked systems do not exist<br/>for the agent — no error message,<br/>no side channel."])
+S0 -->|"No tools allowed"| D0(["✋ DENY · No tool access<br/>Agent responds conversationally only.<br/>Blocked systems do not exist<br/>for the agent — no error message,<br/>no side channel."])
 
-    S0 -->|"Whitelist loaded"| S1["LAYER 1 · Behavioural Steering<br/>─────────────────────────────<br/>Load channel-specific system prompt.<br/>Behaviour rules: tone, detail level,<br/>what to emphasise, what to omit.<br/>Version-controlled in Git, approval workflow."]
+S0 -->|"Whitelist loaded"| S1["LAYER 1 · Behavioural Steering<br/>─────────────────────────────<br/>Load channel-specific system prompt.<br/>Behaviour rules: tone, detail level,<br/>what to emphasise, what to omit.<br/>Version-controlled in Git, approval workflow."]
 
-    S1 --> LLM["LLM API Request<br/>─────────────────<br/>Global prompt + channel overlay<br/>+ ONLY whitelisted tool definitions<br/>+ conversation history"]
+S1 --> LLM["LLM API Request<br/>─────────────────<br/>Global prompt + channel overlay<br/>+ ONLY whitelisted tool definitions<br/>+ conversation history"]
 
-    LLM --> ToolCall{"LLM generates<br/>tool call?"}
+LLM --> ToolCall{"LLM generates<br/>tool call?"}
 
-    ToolCall -->|"No"| DirectResp(["Response without data access<br/>(pure conversation)"])
+ToolCall -->|"No"| DirectResp(["Response without data access<br/>(pure conversation)"])
 
-    ToolCall -->|"Yes"| MCP["Tool call to Custom MCP Server<br/>+ context metadata<br/>(user_id, channel_id, channel_type)"]
+ToolCall -->|"Yes"| MCP["Tool call to Custom MCP Server<br/>+ context metadata<br/>(user_id, channel_id, channel_type)"]
 
-    MCP --> S0b{{"LAYER 0 · Defence in Depth<br/>──────────────────────────<br/>MCP Server: Is this tool<br/>allowed for this channel?<br/>(Independent check)"}}
+MCP --> S0b{{"LAYER 0 · Defence in Depth<br/>──────────────────────────<br/>MCP Server: Is this tool<br/>allowed for this channel?<br/>(Independent check)"}}
 
-    S0b -->|"Not allowed"| D0b(["✋ DENY · Tool call rejected<br/>Catches compromised<br/>orchestration service.<br/>Slug-level enforcement:<br/>URL path, not parameter."])
+S0b -->|"Not allowed"| D0b(["✋ DENY · Tool call rejected<br/>Catches compromised<br/>orchestration service.<br/>Slug-level enforcement:<br/>URL path, not parameter."])
 
-    S0b -->|"Allowed"| S2{{"LAYER 2 · Identity Delegation<br/>────────────────────────────<br/>Token Exchange (RFC 8693)<br/>sub: user · act: bot<br/>scope: read · TTL: 15min"}}
+S0b -->|"Allowed"| S2{{"LAYER 2 · Identity Delegation<br/>────────────────────────────<br/>Token Exchange (RFC 8693)<br/>sub: user · act: bot<br/>scope: read · TTL: 15min"}}
 
-    S2 -->|"Token exchange failed<br/>(user lacks access)"| D2(["✋ DENY · No permission<br/>Agent responds neutrally:<br/>'I cannot provide information<br/>on that topic.'<br/>NOT 'Access denied'<br/>NOT 'Not found'"])
+S2 -->|"Token exchange failed<br/>(user lacks access)"| D2(["✋ DENY · No permission<br/>Agent responds neutrally:<br/>'I cannot provide information<br/>on that topic.'<br/>NOT 'Access denied'<br/>NOT 'Not found'"])
 
-    S2 -->|"Delegated token obtained"| S3{{"LAYER 3 · Dissemination Policy<br/>─────────────────────────────<br/>Policy Engine: May this user<br/>see this data in this<br/>channel context?<br/>(classification × channel)"}}
+S2 -->|"Delegated token obtained"| S3{{"LAYER 3 · Dissemination Policy<br/>─────────────────────────────<br/>Policy Engine: May this user<br/>see this data in this<br/>channel context?<br/>(classification × channel)"}}
 
-    S3 -->|"DENY<br/>(e.g. confidential data<br/>in public channel)"| D3(["✋ DENY · Context mismatch<br/>User has access to the data,<br/>but the channel context<br/>does not permit disclosure.<br/>'Right person, wrong room'"])
+S3 -->|"DENY<br/>(e.g. confidential data<br/>in public channel)"| D3(["✋ DENY · Context mismatch<br/>User has access to the data,<br/>but the channel context<br/>does not permit disclosure.<br/>'Right person, wrong room'"])
 
-    S3 -->|"ALLOW<br/>(with constraints if applicable)"| Query["MCP Server → Target System<br/>──────────────────────<br/>Query with delegated user token.<br/>Target system returns only data<br/>the user is authorised to see."]
+S3 -->|"ALLOW<br/>(with constraints if applicable)"| Query["MCP Server → Target System<br/>──────────────────────<br/>Query with delegated user token.<br/>Target system returns only data<br/>the user is authorised to see."]
 
-    Query --> Filter["Result filtering<br/>per policy constraints<br/>(e.g. max_classification)"]
+Query --> Filter["Result filtering<br/>per policy constraints<br/>(e.g. max_classification)"]
 
-    Filter --> Response["Filtered data → LLM<br/>LLM formulates response<br/>per channel prompt policy"]
+Filter --> Response["Filtered data → LLM<br/>LLM formulates response<br/>per channel prompt policy"]
 
-    Response --> Deliver(["✅ Authorised response<br/>delivered to channel"])
+Response --> Deliver(["✅ Authorised response<br/>delivered to channel"])
 
-    Deliver -.->|"asynchronous"| S4["LAYER 4 · Compliance Audit<br/>─────────────────────────<br/>Post-hoc review:<br/>· Complete audit log<br/>· Blocked-request analysis<br/>· Optional: Semantic output<br/>  analysis (mosaic problem)<br/>Not in the critical path."]
+Deliver -.->|"asynchronous"| S4["LAYER 4 · Compliance Audit<br/>─────────────────────────<br/>Post-hoc review:<br/>· Complete audit log<br/>· Blocked-request analysis<br/>· Optional: Semantic output<br/>  analysis (mosaic problem)<br/>Not in the critical path."]
 
-    %% Styling
-    classDef deny fill:#fee,stroke:#c33,stroke-width:2px,color:#333
-    classDef allow fill:#efe,stroke:#3a3,stroke-width:2px,color:#333
-    classDef layer fill:#e8f0fe,stroke:#4a7bd4,stroke-width:2px,color:#333
-    classDef process fill:#fff,stroke:#666,stroke-width:1px,color:#333
-    classDef audit fill:#f3e8ff,stroke:#9b59b6,stroke-width:2px,color:#333
+%% Styling
+classDef deny fill:#fee,stroke:#c33,stroke-width:2px,color:#333
+classDef allow fill:#efe,stroke:#3a3,stroke-width:2px,color:#333
+classDef layer fill:#e8f0fe,stroke:#4a7bd4,stroke-width:2px,color:#333
+classDef process fill:#fff,stroke:#666,stroke-width:1px,color:#333
+classDef audit fill:#f3e8ff,stroke:#9b59b6,stroke-width:2px,color:#333
 
-    class D0,D0b,D2,D3 deny
-    class Deliver,DirectResp allow
-    class S0,S0b,S2,S3 layer
-    class S1,LLM,MCP,Query,Filter,Response,Extract process
-    class S4 audit
+class D0,D0b,D2,D3 deny
+class Deliver,DirectResp allow
+class S0,S0b,S2,S3 layer
+class S1,LLM,MCP,Query,Filter,Response,Extract process
+class S4 audit
 ```
 
 </details>
@@ -571,6 +571,84 @@ Channel: direct-message
   audience_mode: requester
   → Single recipient, modes are equivalent
 ```
+
+---
+
+## PII Protection Layer (GDPR Compliance Extension)
+
+Layers 0–4 control what data the agent may *share*. The PII Protection Layer addresses a different question: **What data may enter the LLM context window at all?**
+
+This is an independent concern. Even when a user is fully authorised to see personal data, and the channel context permits disclosure, routing that data through an external LLM may constitute a data processing operation under GDPR (or equivalent regulations). The data subject whose personal information is being processed has not consented to LLM inference — and in most cases, cannot.
+
+The PII Protection Layer is orthogonal to the governance layers. It does not replace them. It adds a pre-processing and post-processing stage that ensures personal data is masked before it enters the LLM and restored (where appropriate) after the LLM has generated its response.
+
+### Why Not Pseudonymisation?
+
+The intuitive solution — replace real names with pseudonyms, let the LLM work with pseudonymised data, then re-personalise the output — does not scale in enterprise environments.
+
+**Pseudonymised data is still personal data under GDPR.** Only fully anonymised data (irreversible, no mapping) falls outside GDPR scope. A reversible mapping table is, by definition, not anonymisation.
+
+**Cross-document consistency requires a global mapping table.** In a RAG system that retrieves chunks from multiple documents, the same person must receive the same pseudonym everywhere. "Max Müller" in document A and "Max Müller" in document B must map to the same token — otherwise the LLM cannot reason across documents. This requires a central, enterprise-wide mapping table — itself a high-risk asset under GDPR.
+
+**Entity resolution is an unsolved problem at scale.** "Max Müller", "Herr Müller", "the head of finance" — mapping these to the same pseudonym is not a lookup. It is enterprise-wide entity resolution with temporal dimensions: "the head of finance" was Müller before January 2026 and Schulze after. This requires a versioned knowledge graph, not a replacement table.
+
+**Quality and risk grow proportionally.** The better the pseudonymisation, the more complete and valuable the mapping table — and the more attractive it becomes as an attack target.
+
+**Right to erasure creates cascading obligations.** A deletion request requires cleanup across all systems: source documents, mapping table entries, vector store chunks, and cached responses.
+
+**Pragmatic conclusion:** Full pseudonymisation across an enterprise data estate is not a viable path. The architecture uses selective masking with documented residual risk instead.
+
+### Three-Tier Masking Pipeline
+
+The masking pipeline operates on data *after* retrieval and policy filtering (Layers 0–3) but *before* the data enters the LLM context window. It runs entirely on-premise — no personal data leaves the organisation's infrastructure during masking.
+
+| Tier | Method | Coverage | Risk |
+|---|---|---|---|
+| 1 | Regex patterns | Structured PII: email addresses, IBANs, phone numbers, tax IDs, social security numbers | None — deterministic |
+| 2 | Local NER model (on-premise) | Person names, locations, organisations | Self-hosted processing, no data protection concern |
+| 3 | Local language model (semantic) | Contextual personal references | Chicken-and-egg problem (see below) |
+
+The tiers are applied sequentially. Each tier catches what the previous one missed. Tier 1 handles the easy cases with zero risk. Tier 2 handles named entities that regex cannot catch. Tier 3 attempts to catch references that are personally identifiable only in context.
+
+**NER model selection matters.** For German-language business texts, model choice significantly affects masking quality. Empirical testing shows that NER models vary widely in their ability to handle honorific + surname patterns ("Herr Müller", "Frau Dr. Schulze") that are dominant in German business correspondence. Model evaluation against representative data is essential — do not assume that a model's benchmark scores translate to production accuracy on domain-specific text.
+
+### The Chicken-and-Egg Problem
+
+> "The colleague from accounting who had the incident last month"
+
+This sentence contains no named entity. Regex finds nothing. NER finds nothing. Yet in context, it is personally identifiable — anyone in the organisation knows who is meant.
+
+Detecting such references requires semantic understanding — which requires a language model. But routing the text through a language model for detection is precisely the data processing operation that the masking pipeline is meant to prevent.
+
+**Possible mitigation:** A smaller, locally hosted language model performs semantic masking before the data is sent to the external LLM. The local model is under the organisation's full control and does not constitute third-party processing. Open question: whether current open-source models (European or otherwise) are capable enough for reliable semantic masking in domain-specific business texts.
+
+**Documented residual risk:** Tier 3 coverage is probabilistic, not deterministic. Contextual personal references that the local model fails to detect will reach the external LLM. This risk must be documented in the organisation's data processing records and assessed against the specific data categories being processed.
+
+### De-Masking (Post-LLM)
+
+After the LLM generates its response based on masked data, certain masked tokens may need to be restored for the response to be useful. "PERSON_001 approved the budget" is not helpful to the requesting user.
+
+De-masking is a policy decision, not an automatic reversal:
+
+- **Full de-masking:** All masked tokens are restored. Appropriate when the requesting user is authorised to see the original PII and the channel context permits it (validated by Layers 2 and 3).
+- **Selective de-masking:** Only specific token categories are restored (e.g., organisation names but not person names). Appropriate for mixed-sensitivity contexts.
+- **No de-masking:** The response is delivered with masked tokens. Appropriate when the data is used for aggregation or analysis where individual identities are irrelevant.
+
+The de-masking decision is evaluated by the policy engine using the same context (user, channel, classification) as Layers 2 and 3. The masking/de-masking table is held in memory for the duration of the request and discarded after response delivery — no persistent mapping table.
+
+### Pipeline Position
+
+```
+Retrieval → Policy Filter (Layers 0-3) → PII Masking (Tiers 1-3) → LLM → De-Masking (policy-controlled) → Response to Channel
+```
+
+The PII Protection Layer sits between the policy filter and the LLM. It receives only data that has already passed all governance checks. It does not make access decisions — it protects data that has been approved for use from unnecessary exposure during LLM processing.
+
+### Applicability
+
+This extension is relevant for organisations operating under GDPR or equivalent data protection regulations that restrict the processing of personal data by third-party systems. It is not required for deployments using fully self-hosted LLMs where no personal data leaves the organisation's infrastructure.
+
+The architecture supports both configurations: with PII Protection Layer (external LLM, regulated environment) and without (self-hosted LLM or non-regulated context). The governance layers (0–4) apply in both cases.
 
 ---
 
@@ -781,6 +859,8 @@ The following scenarios have been tested on the reference implementation:
 | **Mosaic Problem** | The risk that individually non-sensitive data points combine into sensitive conclusions |
 | **Context Window Isolation** | Processing each request with a fresh, policy-evaluated context rather than accumulating state |
 | **Slug-Level Enforcement** | Embedding tool identifiers in URL paths rather than parameters to prevent prompt-based circumvention |
+| **PII Protection Layer** | Pre-LLM masking and post-LLM de-masking pipeline that prevents personal data from entering external LLM context windows. Orthogonal to the governance layers (0–4). |
+| **Chicken-and-Egg Problem** | Contextual personal references that require semantic understanding (i.e., an LLM) to detect — but the detection must happen *before* the data reaches the LLM |
 
 ---
 
