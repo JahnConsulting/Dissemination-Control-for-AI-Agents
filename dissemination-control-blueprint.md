@@ -1,7 +1,7 @@
 # Dissemination Control for AI Agents
 ## Architecture Blueprint: Context-Aware Governance with Identity Delegation
 
-**Version:** 0.5 — Reference Architecture  
+**Version:** 0.6 — Reference Architecture  
 **Author:** Andre Jahn, Jahn Consulting  
 **Date:** March 2026  
 **License:** CC BY-SA 4.0
@@ -961,7 +961,9 @@ The following scenarios have been tested on the reference implementation:
 | **Slug-Level Enforcement** | Embedding tool identifiers in URL paths rather than parameters to prevent prompt-based circumvention |
 | **PII Protection Layer** | Pre-LLM masking and post-LLM de-masking pipeline that prevents personal data from entering external LLM context windows. Orthogonal to the governance layers (0–4). |
 | **Chicken-and-Egg Problem** | Contextual personal references that require semantic understanding (i.e., an LLM) to detect — but the detection must happen *before* the data reaches the LLM |
-| **Knowledge Access** | Data access via vector store (RAG), where the source system is not consulted at query time. Authorisation is based on classification attributes assigned at ingestion, not on the source system's native permission model. | | **Direct Access** | Data access via the source system's API using Token Exchange. The source system enforces its native permission model. Preferred when available. | | **Classification at Ingestion** | The process of assigning security-relevant metadata (confidentiality level, organisational unit, data type) to each chunk when data is embedded into a vector store. For systems without native authorisation, this is the sole basis for policy decisions. |
+| **Knowledge Access** | Data access via vector store (RAG), where the source system is not consulted at query time. Authorisation is based on classification attributes assigned at ingestion, not on the source system's native permission model. | 
+| **Direct Access** | Data access via the source system's API using Token Exchange. The source system enforces its native permission model. Preferred when available. |
+| **Classification at Ingestion** | The process of assigning security-relevant metadata (confidentiality level, organisational unit, data type) to each chunk when data is embedded into a vector store. For systems without native authorisation, this is the sole basis for policy decisions. |
 
 ---
 
