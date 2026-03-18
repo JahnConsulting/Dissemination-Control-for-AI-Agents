@@ -439,8 +439,7 @@ Layer 4: Compliance Audit
 
 ```mermaid
 flowchart TD
-    Start(["User message<br/>in channel"])
---> Extract["Orchestration Service: Extract context<br/>user_id · channel_id · channel_type"]
+    Start(["User message<br/>in channel"]) --> Extract["Orchestration Service: Extract context<br/>user_id · channel_id · channel_type"]
 
 Extract --> S0{{"LAYER 0 · Tool Containment<br/>─────────────────────────<br/>Policy Engine: Which tools<br/>are allowed for this channel?<br/>(Default Deny)"}}
 
@@ -518,6 +517,104 @@ Channel: #engineering
 Channel: direct-message
   knowledge-base access: [user-scoped — all collections the user has access to]
 ```
+
+---
+
+## Vector Store Integration (RAG)
+
+Retrieval-Augmented Generation (RAG) uses a vector store to find semantically relevant content across large document collections. The agent queries the vector store with an embedding of the user's question, retrieves the most relevant chunks, and includes them in the LLM prompt as context.
+
+This creates a governance challenge that is structurally different from direct system access.
+
+### RAG Is an Independent System
+
+When data from Confluence, Jira, SharePoint, or any other source is embedded into a vector store, it **leaves the authorisation context of the source system.** The source system no longer enforces anything. Its permissions do not apply. Its audit trails do not cover the data.
+
+This is the critical distinction: when the agent queries Jira via Token Exchange (Layer 2), Jira enforces its native permission model. When the agent queries a vector store containing data _extracted from_ Jira, no one enforces anything — unless the architecture provides for it explicitly.
+
+A vector store is a retrieval engine. It finds semantically similar chunks. It has no concept of users, roles, or permissions. Treating RAG as an extension of the source systems — by syncing ACLs into vector metadata, caching permissions at login, or replicating authorisation logic — creates a second source of truth that will inevitably drift from the original.
+
+**Architectural principle: RAG is an independent system with its own authorisation model**, just like any other system that holds data. It is not an extension of Confluence, Jira, or SharePoint.
+
+### Two Access Tiers
+
+The architecture distinguishes two tiers of data access. Both are governed by the same five layers, but the authorisation basis differs.
+
+|Tier|Access Pattern|Authorisation Basis|Granularity|
+|---|---|---|---|
+|**Direct Access**|Agent queries the source system via MCP + Token Exchange|Source system enforces its native permission model via delegated user token|Fine-grained (item-level, as defined by the source system)|
+|**Knowledge Access (RAG)**|Agent queries a vector store containing extracted and embedded data|Classification attributes on each chunk, evaluated by the policy engine|Coarser (classification-level, as defined at ingestion)|
+
+Direct Access (Tier 1 of the access model) is the preferred path when the source system is available and its API supports the required query. The source system retains full authority over permissions. Token Exchange (Layer 2) ensures per-user scoping. No additional classification effort is required.
+
+Knowledge Access (Tier 2 of the access model) is used when semantic search across large document collections is required — the use case that RAG was designed for. The source system is not in the loop at query time. Authorisation depends entirely on the classification attributes assigned during ingestion and the policy engine's evaluation of those attributes against the user and channel context.
+
+### Enforcement Architecture
+
+The vector store has no native authorisation. The architecture provides it by placing a **Policy Enforcement Point in front of the vector store** — the same pattern used for any other system.
+
+A dedicated MCP server mediates all agent access to the vector store. This MCP server:
+
+1. Is subject to **Layer 0 (Tool Containment)** — the RAG tools are only visible in channels where they are explicitly whitelisted.
+2. Passes retrieved chunks through the **policy engine (Layer 3)** — each chunk's classification attributes are evaluated against the user's identity and the channel context before the chunk enters the LLM prompt.
+3. Logs all retrievals and policy decisions for **Layer 4 (Compliance Audit)**.
+
+The agent does not interact with the vector store directly. What it cannot request, it cannot leak.
+
+```
+Channel: #sales-team
+  RAG tools available: [search_sales, search_product]
+  RAG tools not available: [search_engineering, search_hr]
+  → Agent can semantically search sales and product documentation
+  → Engineering and HR knowledge does not exist for the agent
+
+Policy evaluation per chunk:
+  Input: user, channel, chunk classification (org_unit, confidentiality, data_type)
+  → chunk classified as org_unit: sales, confidentiality: internal → ALLOW in #sales-team
+  → chunk classified as org_unit: hr, confidentiality: restricted → DENY (tool not even visible)
+```
+
+### Classification at Ingestion
+
+Since the vector store has no native permissions, the classification attributes assigned during ingestion are the **sole basis for policy decisions** at query time. There is no second enforcement layer — unlike Direct Access, where the source system provides a safety net even if the policy engine is misconfigured.
+
+This makes classification at ingestion a security-critical operation for RAG.
+
+Classification attributes are properties of the data, not permissions of users — consistent with the principle established in the governance layers. Recommended minimum attributes per chunk:
+
+- **Confidentiality level** (e.g., public, internal, restricted, confidential)
+- **Organisational unit** (e.g., sales, engineering, hr, finance)
+- **Data type** (e.g., documentation, policy, report, correspondence)
+- **Source system** (e.g., confluence, sharepoint, jira)
+
+The classification can be derived from the source system's structure (a Confluence space "HR Policies" implies org_unit: hr), assigned by automated rules during the ingestion pipeline, or reviewed manually for high-sensitivity sources. The appropriate method depends on the source system's data organisation — this is an implementation decision, not an architectural one.
+
+### Re-Classification and Re-Embedding
+
+When the classification of a data source changes — for example, a Confluence space is reclassified from "internal" to "restricted" — all chunks from that source must be re-embedded with updated classification attributes. A partial update is not sufficient: stale classification on even a single chunk is a potential policy bypass.
+
+Re-embedding also addresses content freshness. The vector store's content is a snapshot taken at ingestion time. A TTL-based re-embedding schedule ensures that both classification and content remain current. The appropriate TTL depends on the data source's rate of change — this is a data governance decision, not a security architecture concern, and is outside the scope of this blueprint.
+
+### Documented Residual Risk
+
+RAG operates on a **coarser permission model** than Direct Access. This is a conscious architectural trade-off, not a gap:
+
+- **Item-level permissions do not carry over.** Page-level overrides in Confluence, item-level security in SharePoint, or issue-level security schemes in Jira are not reflected in the vector store. If a source system contains documents with heterogeneous classification within the same structural unit (e.g., public and confidential documents in the same Confluence space), the classification at ingestion must account for this — either by classifying at document level rather than source level, or by excluding heterogeneous sources from RAG.
+- **Classification quality is the security ceiling.** Misclassification at ingestion leads to incorrect policy decisions at query time. Unlike Direct Access, there is no source-system safety net. For high-sensitivity data, classification should include human review.
+- **The source system is not consulted at query time.** Permission changes in the source system (e.g., a user losing access to a Confluence space) are not reflected in the vector store until re-embedding occurs. The staleness window equals the re-embedding interval.
+
+These trade-offs are acceptable for knowledge-access use cases (searching documentation, finding precedents, exploring institutional knowledge) where the value of semantic search across large collections outweighs the loss of fine-grained source-system permissions. They are **not acceptable** for use cases where item-level access control is required — those should use Direct Access via Token Exchange.
+
+### Systems With and Without Native Authorisation
+
+The RAG integration highlights a broader architectural distinction that applies beyond vector stores:
+
+|Category|Examples|Authorisation Enforcement|
+|---|---|---|
+|**Systems with native authorisation**|Jira, Confluence, SharePoint, ServiceNow|Source system enforces via delegated user token. Policy engine provides additional dissemination control. Two enforcement layers.|
+|**Systems without native authorisation**|Vector stores, file systems, data lakes, object storage|Classification at ingestion + policy engine is the **sole** enforcement layer. No safety net.|
+
+For systems without native authorisation, the quality of classification at ingestion and the correctness of policy-engine rules carry the entire security burden. This must be reflected in the governance process: tool enablement for RAG sources should require explicit acknowledgement that the source system does not provide independent enforcement.
 
 ---
 
@@ -810,6 +907,9 @@ In shared channels, the conversation history may contain data from other users' 
 ### Agent-to-Agent Delegation
 When agents delegate tasks to other agents (e.g., an orchestrator agent invoking a specialist agent), the governance chain must be preserved. The current architecture does not define a multi-hop delegation protocol. For now, agent-to-agent interactions should be treated as a recognised governance gap requiring human oversight at delegation boundaries.
 
+### RAG Permission Model
+The architecture treats vector stores as independent systems with their own authorisation model based on classification attributes, rather than attempting to replicate source-system permissions. This is a deliberate trade-off: it sacrifices fine-grained, per-user, item-level permissions in exchange for a classification-based model that is maintainable, auditable, and independent of source-system availability. Organisations that require item-level access control for specific data should use Direct Access (Token Exchange) for that data rather than including it in the RAG pipeline.
+
 ---
 
 ## Reference Implementation
@@ -861,6 +961,7 @@ The following scenarios have been tested on the reference implementation:
 | **Slug-Level Enforcement** | Embedding tool identifiers in URL paths rather than parameters to prevent prompt-based circumvention |
 | **PII Protection Layer** | Pre-LLM masking and post-LLM de-masking pipeline that prevents personal data from entering external LLM context windows. Orthogonal to the governance layers (0–4). |
 | **Chicken-and-Egg Problem** | Contextual personal references that require semantic understanding (i.e., an LLM) to detect — but the detection must happen *before* the data reaches the LLM |
+| **Knowledge Access** | Data access via vector store (RAG), where the source system is not consulted at query time. Authorisation is based on classification attributes assigned at ingestion, not on the source system's native permission model. | | **Direct Access** | Data access via the source system's API using Token Exchange. The source system enforces its native permission model. Preferred when available. | | **Classification at Ingestion** | The process of assigning security-relevant metadata (confidentiality level, organisational unit, data type) to each chunk when data is embedded into a vector store. For systems without native authorisation, this is the sole basis for policy decisions. |
 
 ---
 
