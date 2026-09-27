@@ -131,7 +131,7 @@ A two-level prompt system:
 1. **Global system prompt** — Defines the agent's base personality, safety constraints, and organisation-wide policies. Applies to all channels.
 2. **Channel-specific prompt overlays** — Define context-appropriate behaviour: level of detail, tone, what to emphasise, what to omit. A public channel gets a concise, non-technical persona. An engineering channel gets a detailed, technical one. A direct message can be more personal and comprehensive.
 
-**Governance model:** The global prompt is controlled by the platform administrator. Channel-specific overlays can be delegated to channel owners within boundaries defined by the admin layer — self-service within guardrails.
+**Governance model:** The global prompt is controlled by the platform administrator. Channel-specific overlays can be delegated to channel owners within boundaries defined by the admin layer — self-service within guardrails. Delegated tasks use the same prompt governance, with an [operator-controlled system prompt](#operator-controlled-system-prompt) supplied separately from the subtask instructions.
 
 **This is not just "prompt engineering."** It is a policy layer with version control, audit trail, and approval workflows. Changes to the global prompt or channel overlays follow the same governance process as tool enablement changes. They are stored in Git, reviewed, and deployed through the same pipeline as policy-engine rules.
 
@@ -793,6 +793,16 @@ Dissemination Control admits only data approved for the task and its processing 
 
 Permissions, limits, and escalation rules are managed outside the LLM. They may be presented to the model as information, but the model cannot modify the authoritative configuration.
 
+### Operator-Controlled System Prompt
+
+Each subagent receives a **system prompt** in addition to its **task prompt**. The operator can define the system prompt for a specialist role or task category, including its behaviour, working method, output format, and handling of uncertainty. Where no specialised system prompt is configured, the trusted runtime selects the operator-approved default.
+
+The effective system prompt is assembled from the approved configuration under the Layer 1 governance model, including applicable global instructions and overlays. The parent agent supplies the subtask and its context; it cannot replace or modify the authoritative system-prompt configuration.
+
+The trusted delegation tool resolves the effective system prompt and includes its content, profile reference, and version in the signed payload. After verification, the runtime supplies it through the model's supported system-instruction mechanism, separately from task instructions and conversation history. The audit records which prompt version was used, and correction attempts restore that approved version alongside the previous context.
+
+**Enforcement boundary:** The system prompt provides behavioural steering. Permissions, tool access, execution limits, and result-release rules continue to be enforced independently by Dissemination Control and the trusted runtime.
+
 ### Access, Delegation, and Return Permissions
 
 The architecture distinguishes three permissions:
@@ -815,11 +825,11 @@ A specialist may therefore have access that its parent agent does not possess. T
 
 1. The main agent invokes an enabled delegation tool, such as `launchSubAgent`, with the requested subtask.
 2. The trusted tool implementation resolves the requesting user, parent task, and authorised context from system-controlled data. Dissemination Control evaluates the requested delegation.
-3. The tool constructs the authoritative execution message, including permitted models, tools, limits, destinations, and the task prompt.
+3. The tool constructs the authoritative execution message, including permitted models, tools, limits, destinations, the resolved operator-controlled system prompt, and the task prompt.
 4. The tool signs the complete execution payload. The signing key remains outside the LLM's access.
 5. At the receiving side, Dissemination Control verifies the signature, authorised issuer, intended recipient, validity, and applicable execution permissions. The consumer starts the subagent only after those checks and duplicate detection succeed.
 
-**Signature scope:** All execution-relevant fields, including the message UUID, header, prompt, and context, are covered together. An unkeyed checksum is insufficient: a modified message could be accompanied by a newly calculated checksum. Signing and verification use the same defined representation, such as canonical JSON. The signature is carried separately from the signed payload.
+**Signature scope:** All execution-relevant fields, including the message UUID, header, system prompt and its version, task prompt, and context, are covered together. An unkeyed checksum is insufficient: a modified message could be accompanied by a newly calculated checksum. Signing and verification use the same defined representation, such as canonical JSON. The signature is carried separately from the signed payload.
 
 Permitted signature profiles and verification keys come from trusted configuration. A message cannot establish its own trust merely by naming a key or policy. Referenced authorisation and execution profiles resolve to versioned or immutable definitions recorded with the decision. A valid signature establishes origin and integrity; execution still requires authorisation. Confidentiality of the message is a separate transport and storage concern.
 
@@ -887,6 +897,11 @@ This example illustrates the message structure rather than prescribing a wire pr
         "releasePolicyRef": "task-002-result-release"
       }
     },
+    "systemPrompt": {
+      "profileRef": "document-research-system-prompt",
+      "version": "1",
+      "promptText": "You are a document-research specialist. Produce concise, source-backed findings. Distinguish evidence from inference, identify uncertainty, and use the designated tools to ask questions and submit results."
+    },
     "prompt": {
       "promptText": "Research documents on the specified topic and prepare a summary with sources.",
       "context": {
@@ -911,6 +926,7 @@ This example illustrates the message structure rather than prescribing a wire pr
 
 - `messageId` identifies this instruction. `taskId`, `rootTaskId`, and `parentAgentId` preserve the delegation chain; `executionAttempt` identifies the attempt within the subtask.
 - `expiresAt` bounds acceptance of this execution message. `timeoutMinutesPerAttempt` separately limits the running attempt.
+- `systemPrompt` contains the effective operator-approved system instructions and their profile reference and version. The runtime supplies these separately from `prompt`, which contains the subtask instructions and context. Both are covered by the signature.
 - `modelCredentialRef` identifies a runtime-managed credential assignment. The message contains no usable access token.
 - `allowedTools` determines the available tool set. The referenced policies supply any further restrictions, such as permitted websites or specialist roles. Tool-call arguments remain subject to Dissemination Control checks.
 - `stagingAreaRef` identifies the protected working area. `releasePolicyRef` governs result visibility after validation.
@@ -944,13 +960,13 @@ The submitted version becomes visible to its intended recipients only after the 
 
 ### Correction Attempts and Context Restoration
 
-If validation rejects a result, the subagent may be restarted for a correction attempt. It receives its previous context together with the identified deficiencies and correction instructions. The original authorised execution conditions and the same checks used for the first start apply again, including checks on the restored context.
+If validation rejects a result, the subagent may be restarted for a correction attempt. It receives its previous context together with the identified deficiencies and correction instructions. The trusted runtime restores the approved system prompt and its version from the task configuration, separately from that context. The original authorised execution conditions and the same checks used for the first start apply again, including checks on the restored context.
 
 The correction attempt receives a new signed execution message with a new `messageId` and incremented `executionAttempt`. Its `taskId` and `rootTaskId` remain unchanged. Task-level question and rejection counters persist across restarts. Time and resource budgets follow the operator's configured per-attempt and aggregate rules.
 
 ### Audit and Credential Traceability
 
-The audit records agent communication, tool invocations, authorisation decisions, result versions, and lifecycle transitions. Events are correlated with the initiating user, root task, subtask, agent, and execution attempt.
+The audit records agent communication, the effective system prompt and its version, tool invocations, authorisation decisions, result versions, and lifecycle transitions. Events are correlated with the initiating user, root task, subtask, agent, and execution attempt.
 
 Credential use remains identifiable through a token identifier and issuer, or a cryptographic fingerprint. Usable credential secrets are excluded or masked before entering ordinary audit records. Relevant authorisation metadata and policy decisions are retained. Token exchanges link the original and issued credential references; operator-approved exceptions identify the dedicated tool and its approval. This preserves the authorisation chain without exposing reusable credentials.
 
@@ -968,7 +984,7 @@ Model-provider access may be mediated through a gateway using virtual keys. In t
 
 These are implementation examples, not additions to the validated reference stack or mandatory product choices. The blueprint requires the stated control properties; the operator chooses how to implement them and supplies all concrete values. Additional tools, rules, checks, and workflow stages can be incorporated under the same [extensibility principles](#extensibility-and-operator-specific-requirements).
 
-**Optional dry-run:** The system can expose the prepared delegation message, destination, context, and execution conditions for review without starting the subagent. It shows the planned instruction; later questions and further delegations arise during execution and undergo their own checks.
+**Optional dry-run:** The system can expose the prepared delegation message, including the system and task prompts, destination, context, and execution conditions, for review without starting the subagent. It shows the planned instruction; later questions and further delegations arise during execution and undergo their own checks.
 
 ---
 

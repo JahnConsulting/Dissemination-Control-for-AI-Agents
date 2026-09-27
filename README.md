@@ -59,7 +59,7 @@ The guardrail providers protect the model. This blueprint protects your infrastr
 
 Includes: problem statement, design principles, five governance layers, three-tier governance model (admin → user → IAM), component architecture with full request flow, defence-in-depth analysis, knowledge base scoping, context window management, compliance process, adoption tiers, prerequisites, design decisions, known limitations, and a reference implementation mapping.
 
-The [subagent extension](dissemination-control-blueprint.md#subagent-handling-in-dissemination-control) covers operator-approved specialist permissions, signed delegation messages with an illustrative JSON example, duplicate detection, result release, correction attempts, and credential traceability. Products and operating parameters remain operator choices.
+The [subagent extension](dissemination-control-blueprint.md#subagent-handling-in-dissemination-control) covers operator-approved specialist permissions, operator-controlled system prompts, signed delegation messages with an illustrative JSON example, duplicate detection, result release, correction attempts, and credential traceability. Products and operating parameters remain operator choices.
 
 ## Reference Implementation
 
