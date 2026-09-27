@@ -1,9 +1,9 @@
 # Dissemination Control for AI Agents
 ## Architecture Blueprint: Context-Aware Governance with Identity Delegation
 
-**Version:** 0.6 — Reference Architecture  
+**Version:** 0.7 — Reference Architecture  
 **Author:** Andre Jahn, Jahn Consulting  
-**Date:** March 2026  
+**Date:** September 2026  
 **License:** CC BY-SA 4.0
 
 ---
@@ -12,9 +12,9 @@
 
 AI agents in enterprise environments access data sources and communicate across channels with different audiences. Existing security models cover authentication and authorisation but do not address a third question: **Which of the accessed data may the agent share in which context?**
 
-This blueprint defines an architecture for Dissemination Control — a governance layer that ensures AI agents follow context-dependent rules about what information they may reveal, to whom, and through which channel. It is vendor-neutral, builds on existing IAM infrastructure, and requires no global data classification effort.
+This blueprint defines an architecture for Dissemination Control — a governance layer that ensures AI agents follow context-dependent rules about what information they may reveal, to whom, and through which channel. It is vendor-neutral, builds on existing IAM infrastructure, and requires no global data classification effort. It provides an extensible framework that operators can adapt to their own requirements, including complex governance models, and extend with additional tools, rules, and checks as those requirements evolve.
 
-The architecture has been validated on a live reference environment with real integrations and is designed for incremental adoption — from basic tool containment to full identity delegation with policy-engine integration.
+Core governance controls have been validated in a live reference environment with real integrations; the Reference Implementation section records the validation status. The architecture is designed for incremental adoption — from basic tool containment to full identity delegation with policy-engine integration, including controlled delegation to subagents.
 
 ---
 
@@ -56,17 +56,32 @@ An AI bot with access to a ticket system operates in a team communication platfo
 
 ### Core Principle
 
-The agent does not have permissions. The **task** has permissions. The agent acts on behalf of a specific user, inherits that user's permissions via delegation, and data access is scoped per request to the relevant context. What the agent cannot see, it cannot leak.
+The agent does not have permissions. The **task** has permissions. By default, the agent acts on behalf of a specific user, inherits that user's permissions via delegation, and data access is scoped per request to the relevant context. The operator may separately approve dedicated specialist tools with extended permissions and explicit return rules, as defined in [Subagent Handling in Dissemination Control](#subagent-handling-in-dissemination-control). What the agent cannot see, it cannot leak.
 
 ### Design Principles
 
 1. **Default Deny / Whitelist** — No tool, no system, no data source is available until explicitly enabled for a given context. Do not filter results — prevent requests. What is not whitelisted does not exist for the agent.
 2. **No global data classification required** — Permissions are derived from existing IAM structures. Existing project roles, group memberships, and access policies serve as implicit classification.
-3. **User identity, not bot identity** — The agent inherits the requesting user's permissions via token exchange, not a service account with broad access.
+3. **User identity by default** — The agent inherits the requesting user's permissions via token exchange. Exceptions require dedicated, operator-approved tools with explicit access and return rules; users cannot request or activate those extended permissions through self-service.
 4. **Task-scoped tokens** — Short-lived, purpose-bound credentials instead of persistent god-mode tokens.
 5. **Defence in depth** — Multiple independent enforcement points. If one is bypassed, the next catches it.
 6. **Existing infrastructure, new wiring** — No new products. The architecture composes existing components (identity providers, policy engines, API gateways) in a new pattern.
 7. **Explicit enablement, auditable by design** — Every tool enablement for a given context requires approval, is version-controlled, and produces an audit trail automatically.
+8. **Extensible by design** — Operators can add tools, rules, and checks throughout the architecture's lifecycle. The framework supports organisation-specific requirements and complex combinations of policies, workflows, and enforcement points.
+
+### Extensibility and Operator-Specific Requirements
+
+The blueprint defines a framework for composing governance controls. Its examples provide starting points that operators can adapt and extend to match their systems, processes, and requirements.
+
+Extension points include:
+
+- **Tools and integrations:** Additional data sources, services, specialist agents, and execution environments.
+- **Rules and policies:** Organisation-specific combinations of identities, roles, audiences, task purposes, and exceptions, including complex approval and escalation workflows.
+- **Checks and processing stages:** Additional validation, authorisation, review, or monitoring steps before, during, and after execution.
+
+These extensions can be introduced at any stage of adoption. Their scope, implementation, and operating parameters are operator decisions. They follow the same controlled enablement, versioning, enforcement, and audit principles as the existing components, with authoritative rules managed outside the LLM.
+
+Message schemas and workflows can also be extended. Any added execution-relevant fields remain covered by the message's integrity protection and are validated by the responsible enforcement components.
 
 ---
 
@@ -122,7 +137,7 @@ A two-level prompt system:
 
 ### Layer 2: Identity Delegation
 
-**What it does:** Ensures that every data access happens with the requesting user's permissions, not the agent's service account.
+**What it does:** Establishes the standard access path: source-system requests use the requesting user's permissions. Dedicated, operator-approved specialist tools are explicit exceptions governed by their own access and return rules; see [Access, Delegation, and Return Permissions](#access-delegation-and-return-permissions).
 
 **Why it matters:** Without identity delegation, the agent operates with a single set of credentials — typically a service account with broad read access. This means every user gets the same data, regardless of their actual permissions. Identity delegation ensures that when user A asks a question, the agent queries the target system as user A, and the target system's native permission model determines what data is returned.
 
@@ -201,6 +216,7 @@ The platform administrator defines the boundaries:
 - The global system prompt and non-negotiable safety constraints
 - Which policy rules apply organisation-wide
 - Who may approve tool enablement requests
+- Which dedicated specialist tools may use extended permissions, for which tasks, and with which return rules
 
 ### User Tier (Self-Service Within Boundaries)
 
@@ -210,11 +226,11 @@ Channel owners and team leads operate within the boundaries set by the admin tie
 - Customise the channel-specific prompt overlay within admin-defined guardrails
 - Configure notification preferences for their channel's agent interactions
 
-**The principle:** The admin tier defines the ceiling. The user tier configures the room within that ceiling. A channel owner cannot enable a tool that the admin has not made available, and cannot override the global prompt's safety constraints.
+**The principle:** The admin tier defines the ceiling. The user tier configures the room within that ceiling. A channel owner cannot enable a tool that the admin has not made available, and cannot override the global prompt's safety constraints. Dedicated tools with extended permissions are outside this self-service process; their enablement is an operator decision.
 
 ### IAM Tier (Hard Ceiling)
 
-The identity provider and target system permissions form the ultimate enforcement boundary. Even if a tool is enabled for a channel and the user requests data they are interested in, the target system only returns what the user's IAM permissions allow. This is not a new policy layer — it is the existing enterprise permission model, now properly delegated to the agent via token exchange.
+The identity provider and target system permissions form the ultimate enforcement boundary for the approved execution identity. On the standard path, the target system only returns what the requesting user's IAM permissions allow. A dedicated specialist tool may use a separately authorised identity under an explicit operator approval; its source-system permissions still bound access, and Dissemination Control enforces the approved return scope. Existing enterprise permissions remain the access boundary in both cases.
 
 ```
 Admin tier:     "Ticket system is available for the sales channel"
@@ -761,9 +777,204 @@ In long-running sessions, the agent's context window accumulates information fro
 
 ---
 
+## Subagent Handling in Dissemination Control
+
+**What it does:** Extends the governance chain to delegated tasks, including nested subagents, inter-agent communication, result submission, and correction attempts. Permissions and execution limits remain under operator control throughout the task lifecycle.
+
+**Why it matters:** A main agent may delegate research or specialist work to other agents with different tools, models, or data access. Each delegation needs an authorised execution context, a verifiable instruction, and a controlled path for returning results.
+
+This extension defines required properties and component responsibilities. The operator selects the products, tools, models, and operating parameters. Product names and limit values below are illustrative.
+
+### Authorised Task and Processing Context
+
+Dissemination Control admits only data approved for the task and its processing context. That approval includes processing by the permitted subagents and execution environments. The complete delegated context — including attachments and retained conversation history — must fall within that approval.
+
+**No additional semantic confidentiality classification is required at each delegation.** The preventive controls determine which data may enter the context and which recipients and environments may process it. The main agent may use and pass on those data within that authorised scope. Existing audience-scoping and applicable PII-protection rules continue to apply.
+
+Permissions, limits, and escalation rules are managed outside the LLM. They may be presented to the model as information, but the model cannot modify the authoritative configuration.
+
+### Access, Delegation, and Return Permissions
+
+The architecture distinguishes three permissions:
+
+| Permission | Question |
+|---|---|
+| **Access** | Which information may this agent retrieve through its tools? |
+| **Delegation** | Which specialist agents may it commission, and for which tasks? |
+| **Return** | Which information may the specialist return, and to which recipients? |
+
+**Standard path:** Tool adapters access source systems with the requesting user's credentials or delegated permissions. The target system enforces that user's access rights. Credential values are handled by the trusted runtime or tool adapter and remain outside the LLM context.
+
+**Operator-approved exceptions:** The operator may enable dedicated tools with extended permissions for specific tasks. Users cannot request or activate these extended permissions through self-service. The operator defines the permitted use, execution identity, recipients, and return scope; Dissemination Control enforces that decision.
+
+A specialist may therefore have access that its parent agent does not possess. The operator-approved task and tool configuration determines the specialist's permissions. Delegation cannot create permissions beyond that configuration, and the parent agent cannot grant itself or its children additional authority. The operator explicitly accepts the information flows enabled by an exception.
+
+### Authorised and Signed Delegation
+
+**How it works:**
+
+1. The main agent invokes an enabled delegation tool, such as `launchSubAgent`, with the requested subtask.
+2. The trusted tool implementation resolves the requesting user, parent task, and authorised context from system-controlled data. Dissemination Control evaluates the requested delegation.
+3. The tool constructs the authoritative execution message, including permitted models, tools, limits, destinations, and the task prompt.
+4. The tool signs the complete execution payload. The signing key remains outside the LLM's access.
+5. At the receiving side, Dissemination Control verifies the signature, authorised issuer, intended recipient, validity, and applicable execution permissions. The consumer starts the subagent only after those checks and duplicate detection succeed.
+
+**Signature scope:** All execution-relevant fields, including the message UUID, header, prompt, and context, are covered together. An unkeyed checksum is insufficient: a modified message could be accompanied by a newly calculated checksum. Signing and verification use the same defined representation, such as canonical JSON. The signature is carried separately from the signed payload.
+
+Permitted signature profiles and verification keys come from trusted configuration. A message cannot establish its own trust merely by naming a key or policy. Referenced authorisation and execution profiles resolve to versioned or immutable definitions recorded with the decision. A valid signature establishes origin and integrity; execution still requires authorisation. Confidentiality of the message is a separate transport and storage concern.
+
+### Example Execution Message
+
+This example illustrates the message structure rather than prescribing a wire protocol. All identifiers, model aliases, policy references, and limits are illustrative operator configuration. The trusted tool produces the message after authorisation.
+
+```json
+{
+  "payload": {
+    "header": {
+      "schemaVersion": "1.0",
+      "messageId": "731ca9f4-6ed8-4b65-b7b2-d869c3a98451",
+      "taskId": "research-subtask-002",
+      "rootTaskId": "research-task-001",
+      "parentAgentId": "main-agent-001",
+      "executionAttempt": 1,
+      "recipient": "subagent-launcher",
+      "createdAt": "2026-09-27T10:00:00Z",
+      "expiresAt": "2026-09-27T10:15:00Z",
+      "authorization": {
+        "initiatingUserId": "user-001",
+        "authorizationContextRef": "auth-context-002",
+        "policyVersion": "research-policy-v3"
+      },
+      "execution": {
+        "agentRole": "document-research",
+        "processingProfileRef": "approved-research-environment",
+        "allowedModels": [
+          "research-model-a",
+          "research-model-b"
+        ],
+        "modelCredentialRef": "virtual-key-assignment-002"
+      },
+      "limits": {
+        "timeoutMinutesPerAttempt": 15,
+        "maxTokensPerAttempt": 100000,
+        "maxQuestionsPerTask": 3,
+        "maxRejectedResultsPerTask": 2,
+        "maxSubagentsPerTaskTree": 3,
+        "maxDelegationDepth": 2
+      },
+      "allowedTools": [
+        {
+          "toolName": "webSearch",
+          "policyRef": "approved-web-research"
+        },
+        {
+          "toolName": "launchSubAgent",
+          "policyRef": "approved-research-delegation"
+        },
+        {
+          "toolName": "askYourAgent",
+          "recipientRef": "main-agent-001",
+          "channelRef": "task-001-questions"
+        },
+        {
+          "toolName": "deliverAnswer",
+          "recipientRef": "result-validation",
+          "channelRef": "task-002-submissions"
+        }
+      ],
+      "output": {
+        "stagingAreaRef": "task-002-working-results",
+        "releasePolicyRef": "task-002-result-release"
+      }
+    },
+    "prompt": {
+      "promptText": "Research documents on the specified topic and prepare a summary with sources.",
+      "context": {
+        "topic": "Example topic",
+        "requirements": [
+          "Use the approved research tools.",
+          "Identify unsupported statements.",
+          "Submit the result through deliverAnswer."
+        ]
+      }
+    }
+  },
+  "signature": {
+    "profileRef": "approved-signature-profile",
+    "keyId": "delegation-signing-key-01",
+    "value": "<SIGNATURE_OF_CANONICAL_PAYLOAD>"
+  }
+}
+```
+
+**Reading the example:**
+
+- `messageId` identifies this instruction. `taskId`, `rootTaskId`, and `parentAgentId` preserve the delegation chain; `executionAttempt` identifies the attempt within the subtask.
+- `expiresAt` bounds acceptance of this execution message. `timeoutMinutesPerAttempt` separately limits the running attempt.
+- `modelCredentialRef` identifies a runtime-managed credential assignment. The message contains no usable access token.
+- `allowedTools` determines the available tool set. The referenced policies supply any further restrictions, such as permitted websites or specialist roles. Tool-call arguments remain subject to Dissemination Control checks.
+- `stagingAreaRef` identifies the protected working area. `releasePolicyRef` governs result visibility after validation.
+- `signature.value` is a placeholder. An implementation computes the signature over the complete canonicalised `payload`.
+
+### Message Delivery and Duplicate Detection
+
+Every new message receives a unique UUID. Retransmission of the same message preserves that UUID. A correction instruction receives a new UUID while retaining its relationship to the original task. The UUID is part of the signed payload.
+
+The receiving tool or enforcement point detects duplicates before another execution can begin. Sender-side checks alone do not cover redelivery by the messaging system. Multiple consumers use a shared state store; checking and reserving an identifier must be atomic so that concurrent consumers cannot both treat the message as new.
+
+The shared record retains processing state as well as the identifier. Duplicate records survive restarts for the relevant replay window. Recovery reconciles an interrupted attempt with its recorded execution state so that redelivery does not launch an additional agent or silently lose the original task. The operator selects the storage mechanism, retention, and recovery implementation.
+
+### Execution, Questions, and Escalation
+
+The subagent receives only its permitted tools. Dissemination Control checks every invocation, including further delegation and inter-agent communication. Messaging permissions enforce the authorised senders and recipients for the configured channels.
+
+Questions to the parent agent use a dedicated tool, such as `askYourAgent`, and a defined communication path. Questions and replies are recorded and remain within the authorised information-sharing scope. The same controls apply at every delegation depth.
+
+The operator configures limits for questions, rejected results, runtime, resource consumption, concurrent agents, total agents, and delegation depth. The configuration distinguishes limits per execution attempt from limits per task or complete task tree. Counters and limits are enforced outside the LLM; shared limits are coordinated across concurrent executions.
+
+When an escalation threshold is reached, automated processing of the affected task stops and the issue is passed to the designated human authority. The operator defines the escalation destination and the conditions for resuming or ending the task.
+
+### Result Submission and Release
+
+Results are first written to a protected staging area. A tool such as `deliverAnswer` submits a specific result version for validation. Once that submission is durably recorded, the runtime ends the execution attempt.
+
+**Quality acceptance and dissemination approval are separate decisions.** A parent agent may assess whether the work answers the question. Dissemination Control enforces the configured release conditions for the intended recipients. Quality acceptance cannot grant additional permissions.
+
+The submitted version becomes visible to its intended recipients only after the required approvals. Access to the staging area is limited to authorised execution and validation components; the parent agent or user cannot bypass release through direct storage access. The policy-controlled release is part of preventive enforcement. Optional semantic monitoring in Layer 4 remains an asynchronous audit function.
+
+### Correction Attempts and Context Restoration
+
+If validation rejects a result, the subagent may be restarted for a correction attempt. It receives its previous context together with the identified deficiencies and correction instructions. The original authorised execution conditions and the same checks used for the first start apply again, including checks on the restored context.
+
+The correction attempt receives a new signed execution message with a new `messageId` and incremented `executionAttempt`. Its `taskId` and `rootTaskId` remain unchanged. Task-level question and rejection counters persist across restarts. Time and resource budgets follow the operator's configured per-attempt and aggregate rules.
+
+### Audit and Credential Traceability
+
+The audit records agent communication, tool invocations, authorisation decisions, result versions, and lifecycle transitions. Events are correlated with the initiating user, root task, subtask, agent, and execution attempt.
+
+Credential use remains identifiable through a token identifier and issuer, or a cryptographic fingerprint. Usable credential secrets are excluded or masked before entering ordinary audit records. Relevant authorisation metadata and policy decisions are retained. Token exchanges link the original and issued credential references; operator-approved exceptions identify the dedicated tool and its approval. This preserves the authorisation chain without exposing reusable credentials.
+
+Model-provider access may be mediated through a gateway using virtual keys. In that configuration, agent runtimes use only virtual keys, provider credentials remain in the gateway's secret management, and model calls pass through the gateway. Credential references and request identifiers connect the model-usage records to the task audit and allow central cost attribution, including correction attempts.
+
+### Operator Configuration and Implementation Examples
+
+| Responsibility | Possible Implementation | Operator Decisions |
+|---|---|---|
+| Model access and cost accounting | LiteLLM or an equivalent gateway | Approved models and deployments, virtual-key assignments, budgets and rate limits |
+| Agent messaging | NATS/JetStream or an equivalent messaging system | Channel permissions, delivery behaviour, message validity and retention |
+| Duplicate detection and execution state | Shared database or durable cache | Atomic reservation, recovery, replay window and retention |
+| Result storage | S3-compatible object storage or an equivalent repository | Task isolation, validation access, release rules and retention |
+| Authorisation and signature verification | Existing policy and enforcement components | Tool grants, specialist exceptions, trusted issuers, keys and signature profiles |
+
+These are implementation examples, not additions to the validated reference stack or mandatory product choices. The blueprint requires the stated control properties; the operator chooses how to implement them and supplies all concrete values. Additional tools, rules, checks, and workflow stages can be incorporated under the same [extensibility principles](#extensibility-and-operator-specific-requirements).
+
+**Optional dry-run:** The system can expose the prepared delegation message, destination, context, and execution conditions for review without starting the subagent. It shows the planned instruction; later questions and further delegations arise during execution and undergo their own checks.
+
+---
+
 ## Compliance Process for Tool Enablement
 
-When a team requires access to an additional tool in their channel:
+When a team requires access to an additional standard tool in its channel:
 
 ```
 1. Request
@@ -905,7 +1116,7 @@ When a user lacks access, the agent's response must be carefully worded to avoid
 In shared channels, the conversation history may contain data from other users' queries. The architecture recommends per-request context isolation for sensitive environments. For lower-sensitivity environments, shared conversation history within a channel is acceptable if all channel participants have equivalent access levels — which is typically the case by channel design.
 
 ### Agent-to-Agent Delegation
-When agents delegate tasks to other agents (e.g., an orchestrator agent invoking a specialist agent), the governance chain must be preserved. The current architecture does not define a multi-hop delegation protocol. For now, agent-to-agent interactions should be treated as a recognised governance gap requiring human oversight at delegation boundaries.
+The [Subagent Handling in Dissemination Control](#subagent-handling-in-dissemination-control) extension defines the governance contract for multi-hop delegation: operator-approved permissions, signed execution messages, duplicate detection, controlled result release, and correction attempts with retained context. The wire protocol, products, operating limits, and escalation destinations are operator choices. The JSON message is illustrative; this architectural definition does not by itself establish implementation validation.
 
 ### RAG Permission Model
 The architecture treats vector stores as independent systems with their own authorisation model based on classification attributes, rather than attempting to replicate source-system permissions. This is a deliberate trade-off: it sacrifices fine-grained, per-user, item-level permissions in exchange for a classification-based model that is maintainable, auditable, and independent of source-system availability. Organisations that require item-level access control for specific data should use Direct Access (Token Exchange) for that data rather than including it in the RAG pipeline.
@@ -964,6 +1175,11 @@ The following scenarios have been tested on the reference implementation:
 | **Knowledge Access** | Data access via vector store (RAG), where the source system is not consulted at query time. Authorisation is based on classification attributes assigned at ingestion, not on the source system's native permission model. | 
 | **Direct Access** | Data access via the source system's API using Token Exchange. The source system enforces its native permission model. Preferred when available. |
 | **Classification at Ingestion** | The process of assigning security-relevant metadata (confidentiality level, organisational unit, data type) to each chunk when data is embedded into a vector store. For systems without native authorisation, this is the sole basis for policy decisions. |
+| **Delegation Message** | An authorised, signed instruction that binds a subtask and its context to permitted execution conditions, recipients, and limits. |
+| **Task Tree** | A root task and all tasks delegated beneath it. Shared limits and audit correlation can apply across the tree. |
+| **Return Permission** | The operator-defined scope of information a specialist may return to specified recipients, evaluated separately from access and delegation permissions. |
+| **Virtual Key** | A gateway credential used by an agent runtime for controlled model access and cost attribution while provider credentials remain at the gateway. |
+| **Correction Attempt** | A new execution attempt for the same task, restoring prior context with correction instructions and applying the same authorisation checks. |
 
 ---
 

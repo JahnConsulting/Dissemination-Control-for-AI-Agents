@@ -20,13 +20,13 @@ AI agents decide based on **relevance**, not **confidentiality**. The most helpf
 
 ## What This Blueprint Covers
 
-A vendor-neutral reference architecture for Dissemination Control — the governance layer that ensures AI agents follow context-dependent rules about information sharing. It builds on existing IAM infrastructure and requires no global data classification effort.
+A vendor-neutral reference architecture for Dissemination Control — the governance layer that ensures AI agents follow context-dependent rules about information sharing. It builds on existing IAM infrastructure and requires no global data classification effort. The blueprint is an extensible framework: operators can adapt it to their own systems and complex governance requirements, adding tools, rules, and checks at any stage. The examples illustrate possible implementations; the operator defines the concrete policies, workflows, and technology choices.
 
 **Five governance layers:**
 
 - **Tool Containment** — The agent can only use tools explicitly whitelisted for the current context. What is not enabled does not exist.
 - **Behavioural Steering** — Version-controlled prompt policies that control how the agent behaves within its permitted scope.
-- **Identity Delegation** — The agent acts with the requesting user's permissions via token exchange, not a service account.
+- **Identity Delegation** — The agent acts with the requesting user's permissions via token exchange by default; dedicated specialist tools with extended permissions require explicit operator approval.
 - **Dissemination Policy** — Context-dependent rules: same data, different visibility depending on channel and audience.
 - **Compliance Audit** — Complete audit trail of all access, all tool calls, all blocked requests.
 
@@ -58,6 +58,8 @@ The guardrail providers protect the model. This blueprint protects your infrastr
 → **[dissemination-control-blueprint.md](dissemination-control-blueprint.md)**
 
 Includes: problem statement, design principles, five governance layers, three-tier governance model (admin → user → IAM), component architecture with full request flow, defence-in-depth analysis, knowledge base scoping, context window management, compliance process, adoption tiers, prerequisites, design decisions, known limitations, and a reference implementation mapping.
+
+The [subagent extension](dissemination-control-blueprint.md#subagent-handling-in-dissemination-control) covers operator-approved specialist permissions, signed delegation messages with an illustrative JSON example, duplicate detection, result release, correction attempts, and credential traceability. Products and operating parameters remain operator choices.
 
 ## Reference Implementation
 
